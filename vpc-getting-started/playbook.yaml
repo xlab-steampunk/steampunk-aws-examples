@@ -1,0 +1,143 @@
+---
+# This playbook creates an AWS EC2 VPC with a public subnet, spins up an
+# instance, and installs a web server. This example can help you follow along
+# the https://steampunk.si/blog/aws-ansible-collection-vpc-getting-started/
+# blog post.
+- name: Create an AWS VPC
+  gather_facts: false
+  hosts: localhost
+
+  tasks:
+
+    - name: Read default variables
+      include_vars:
+        file: vars.yaml
+
+    - name: Create a VPC
+      steampunk.aws.ec2_vpc:
+        name: "{{ vpc_name }}"
+        cidr: "{{ vpc_cidr }}"
+        tags:
+          creation_type: ansible
+      register: vpc
+
+    - name: Create a public subnet
+      steampunk.aws.ec2_subnet:
+        name: "{{ subnet_name }}"
+        vpc: "{{ vpc.object.id }}"
+        cidr: "{{ subnet_cidr }}"
+        tags:
+          creation_type: ansible
+      register: subnet
+
+    - name: Create an Internet gateway
+      steampunk.aws.ec2_internet_gateway:
+        name: "{{ igw_name }}"
+        vpc: "{{ vpc.object.id }}"
+      register: igw
+
+    - name: Route the internal subnet traffic via the Internet gateway
+      ec2_vpc_route_table:
+        vpc_id: "{{ vpc.object.id }}"
+        subnets:
+          - "{{ subnet.object.id }}"
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ igw.object.id }}"
+        tags:
+          Name: "{{ route_table_name }}"
+
+    - name: Set up a security group
+      steampunk.aws.ec2_security_group:
+        name: "{{ security_group_name }}"
+        description: Security group for the VPC Getting Started tutorial
+        vpc: "{{ vpc.object.id }}"
+        ingress:
+          rules:
+            - protocol: tcp
+              port: 80
+              ip_ranges:
+                - cidr: 0.0.0.0/0
+                  description: Steamy HTTP rule
+            - protocol: tcp
+              port: 22
+              ip_ranges:
+                - cidr: "{{ my_public_ip }}"
+                  description: Steamy SSH
+        tags:
+          creation_type: ansible
+      register: security_group
+
+    - name: Set up a keypair
+      steampunk.aws.ec2_key_pair:
+        name: "{{ key_pair_name }}"
+        public_key: "{{ lookup('file', key_pair_public_key) }}"
+      register: key_pair
+
+    - name: Launch an EC2 instance
+      steampunk.aws.ec2_instance:
+        name: "{{ instance_name }}"
+        type: "{{ instance_type }}"
+        ami: "{{ instance_ami }}"
+        key_pair: "{{ key_pair_name }}"
+        subnet: "{{ subnet.object.id }}"
+        security_groups:
+          - "{{ security_group.object.id }}"
+        tags:
+          creation_type: ansible
+          role: web-server
+      register: instance
+
+    - name: Attach a public IP to instance
+      steampunk.aws.ec2_vpc_address:
+        instance: "{{ instance.object.id }}"
+        tags:
+          creation_type: ansible
+      register: address
+
+    - name: Display the public IP
+      debug:
+        msg: Your public IP is {{ address.object.ip }}.
+
+    - name: Hand over the new host to the dynamic inventory group
+      add_host:
+        name: my_instance
+        groups: instances
+        ansible_host: "{{ address.object.ip }}"
+        ansible_user: "{{ instance_os_user }}"
+        ansible_ssh_common_args: >
+          -o IdentitiesOnly=yes
+          -o BatchMode=yes
+          -o UserKnownHostsFile=/dev/null
+          -o StrictHostKeyChecking=no
+
+- name: Install some software on the instance
+  hosts: instances
+  gather_facts: no
+  tasks:
+
+    - name: Wait for the SSH to become available
+      wait_for_connection:
+
+    - name: Install nginx
+      apt:
+        pkg:
+          - nginx
+        update_cache: yes
+      become: yes
+
+    - name: Create Hello Steampunk static page
+      copy:
+        dest: /var/www/html/index.html
+        content: |
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <title>Hello Steampunk!</title>
+          </head>
+          <body>
+            <h1>Hello Steampunk!</h1>
+            <p>Managing services in AWS EC2 with ease.</p>
+          </body>
+          </html>
+      become: yes

@@ -1,0 +1,85 @@
+---
+# This playbook cleans up after `playbook.yaml`.
+# See https://steampunk.si/blog/aws-ansible-collection-vpc-getting-started/
+# blog post for more details.
+- name: Clean up AWS VPC
+  gather_facts: false
+  hosts: localhost
+
+  tasks:
+    - name: Read default variables
+      include_vars:
+        file: vars.yaml
+
+    - name: Get the info on the instance
+      steampunk.aws.ec2_instance_info:
+        names:
+          - "{{ instance_name }}"
+      register: instances
+
+    - name: Get our network interface
+      steampunk.aws.ec2_network_interface_info:
+        ids:
+          - "{{ instances.objects[0].network_interface }}"
+      register: interfaces
+      when: instances.objects
+
+    - name: Destroy the instance
+      steampunk.aws.ec2_instance:
+        id: "{{ instances.objects[0].id }}"
+        state: absent
+      when: instances.objects
+
+    - name: Destroy the elastic IP
+      steampunk.aws.ec2_vpc_address:
+        ip: "{{ interfaces.objects[0].public_ip }}"
+        state: absent
+      when: instances.objects
+
+    - name: Get info on VPC
+      steampunk.aws.ec2_vpc_info:
+        names:
+          - "{{ vpc_name }}"
+      register: vpcs
+
+    - name: Destroy the security group
+      steampunk.aws.ec2_security_group:
+        name: "{{ security_group_name }}"
+        vpc: "{{ vpcs.objects[0].id }}"
+        state: absent
+      when: vpcs.objects
+
+    - name: Find the route to the internet
+      ec2_vpc_route_table_info:
+        filters:
+          vpc-id: "{{ vpcs.objects[0].id }}"
+          "tag:Name": "{{ route_table_name }}"
+      register: route_tables
+
+    - name: Destroy the route to the internet {{ route_tables.route_tables[0].id }}
+      ec2_vpc_route_table:
+        vpc_id: "{{ vpcs.objects[0].id }}"
+        route_table_id: "{{ route_tables.route_tables[0].id }}"
+        lookup: id
+        state: absent
+
+    - name: Destroy the internet gateway
+      steampunk.aws.ec2_internet_gateway:
+        name: "{{ igw_name }}"
+        vpc: "{{ vpcs.objects[0].id }}"
+        state: absent
+      when: vpcs.objects
+
+    - name: Destroy the public subnet
+      steampunk.aws.ec2_subnet:
+        name: "{{ subnet_name }}"
+        vpc: "{{ vpcs.objects[0].id }}"
+        cidr: "{{ subnet_cidr }}"
+        state: absent
+      when: vpcs.objects
+
+    - name: Destroy VPC
+      steampunk.aws.ec2_vpc:
+        name: "{{ vpc_name }}"
+        cidr: "{{ vpc_cidr }}"
+        state: absent
