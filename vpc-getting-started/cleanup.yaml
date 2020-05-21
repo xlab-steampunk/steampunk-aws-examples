@@ -56,12 +56,13 @@
           "tag:Name": "{{ route_table_name }}"
       register: route_tables
 
-    - name: Destroy the route to the internet {{ route_tables.route_tables[0].id }}
+    - name: Destroy the route to the internet
       ec2_vpc_route_table:
         vpc_id: "{{ vpcs.objects[0].id }}"
         route_table_id: "{{ route_tables.route_tables[0].id }}"
         lookup: id
         state: absent
+      when: route_tables.route_tables
 
     - name: Destroy the internet gateway
       steampunk.aws.ec2_internet_gateway:
