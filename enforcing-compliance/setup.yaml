@@ -1,0 +1,52 @@
+---
+# With this playbook, we set up a baseline state that we want to comply with.
+#
+# We set up an EC2 instance and an EC2 Elastic Network Interface.
+# We associate the network interface with the default security group for the
+# VPC we're operating in, and attach it to the instance.
+#
+# See https://steampunk.si/blog/aws-collection-idempotency-check-mode-diff/ for details.
+
+- hosts: localhost
+  gather_facts: no
+
+  vars:
+    # Uncomment the following variables and set them to something that is
+    # accessible using your account.
+    #subnet_id: subnet-06a0f705bc79538ed
+    #ami_id: ami-085925f297f89fce1
+    #key_pair: tst-keypair
+    #type: t3.micro
+
+  tasks:
+
+    - name: Create the steamy-server instance for running a simple app
+      steampunk.aws.ec2_instance:
+        name: steamy-server
+        type: "{{ type }}"
+        subnet: "{{ subnet_id }}"
+        ami: "{{ ami_id }}"
+        key_pair: "{{ key_pair }}"
+        monitoring: detailed
+        tags:
+          app: steamy
+          env: staging
+      register: instance
+
+    - name: Retrieve the default security group for the VPC
+      steampunk.aws.ec2_security_group:
+        name: default
+        vpc: "{{ instance.object.vpc }}"
+      register: default_secgroup
+
+    - name: Create a dedicated network interface and attach it to steamy-server
+      steampunk.aws.ec2_network_interface:
+        name: steamy-eni
+        source_dest_check: true
+        subnet: "{{ instance.object.subnet }}"
+        attachment:
+          instance: "{{ instance.object.id }}"
+          keep_on_termination: false
+        security_groups:
+          - "{{ default_secgroup.object.id }}"
+        clear_security_groups: true

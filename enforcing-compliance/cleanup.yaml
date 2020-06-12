@@ -1,0 +1,32 @@
+---
+# This playbook deletes the resources created by `setup.yaml` and
+# `tweaked-setup.yaml`.
+#
+# See https://steampunk.si/blog/aws-collection-idempotency-check-mode-diff/ for details.
+
+- hosts: localhost
+  gather_facts: no
+
+  tasks:
+
+    - name: Retrieve the steamy-server instance
+      steampunk.aws.ec2_instance_info:
+        names: steamy-server
+      register: instances
+
+    - name: Remove the steamy-eni network interface
+      steampunk.aws.ec2_network_interface:
+        id: "{{ instances.objects[0].secondary_network_interfaces[0] }}"
+        state: absent
+
+    - name: Remove the dangerous-secgroup security group
+      steampunk.aws.ec2_security_group:
+        name: dangerous-secgroup
+        vpc: "{{ instances.objects[0].vpc }}"
+        state: absent
+
+    - name: Remove the steamy-server instance
+      steampunk.aws.ec2_instance:
+        id: "{{ instances.objects[0].id }}"
+        state: absent
+        wait_state: false

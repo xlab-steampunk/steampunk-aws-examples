@@ -1,0 +1,46 @@
+---
+# This playbook tweaks the AWS resources created by `setup.yaml`.
+# It is the source of configuration drift from the initial state.
+#
+# See https://steampunk.si/blog/aws-collection-idempotency-check-mode-diff/ for details.
+
+- hosts: localhost
+  gather_facts: no
+
+  tasks:
+
+    - name: Retrieve the steamy-server instance
+      steampunk.aws.ec2_instance_info:
+        names: steamy-server
+      register: instances
+
+    - name: Modify configuration of the steamy-server instance
+      steampunk.aws.ec2_instance:
+        id: "{{ instances.objects[0].id }}"
+        monitoring: basic  # downgrade from detailed
+        on_instance_initiated_shutdown: terminate  # terminate instead of stopping
+        tags:
+          env: dev  # used to be staging, we make it dev
+      register: instance
+
+    - name: Create a security group to permit SMB traffic from anywhere
+      steampunk.aws.ec2_security_group:
+        name: dangerous-secgroup
+        vpc: "{{ instance.object.vpc }}"
+        description: Permissions for SMB protocol to the instance
+        ingress:
+          rules:
+            - protocol: tcp
+              port: 445
+              ip_ranges:
+                - cidr: 0.0.0.0
+      register: dangerous_secgroup
+
+    - name: Extend steamy-eni's security groups, and update source/dest checking
+      steampunk.aws.ec2_network_interface:
+        id: "{{ instance.object.secondary_network_interfaces[0] }}"
+        attachment:
+          instance: "{{ instance.object.id }}"
+        security_groups:
+          - "{{ dangerous_secgroup.object.id }}"
+        source_dest_check: false
